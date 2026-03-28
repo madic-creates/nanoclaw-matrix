@@ -3,6 +3,8 @@ node_modules/
 .npm-cache/
 # Build output
 dist/
+# Worktrees
+.worktrees/
 
 # Local data & auth
 store/
