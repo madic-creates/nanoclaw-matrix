@@ -197,8 +197,30 @@ Send a test message in the registered Matrix room. If trigger is required, menti
 | `store/matrix/bot.json` | Sync state, filter IDs | Optional |
 | `store/matrix-crypto/` | Device keys, Olm/Megolm sessions | **Critical** |
 
+## E2EE Key Backup (User Responsibility)
+
+There is **no recovery key** for this Matrix integration. Unlike Element, which uses server-side key backup with a recovery key, `matrix-bot-sdk` does not implement the key backup API. The **only** way to recover E2EE keys is a filesystem backup of `store/matrix-crypto/`.
+
+**You are responsible for backing up this directory.** Without it, a lost crypto store means:
+- The bot creates a new device on next start
+- All previous Megolm sessions are permanently lost
+- Messages from before the loss can never be decrypted
+
+### Can I import the backup into Element?
+
+No. The formats are incompatible:
+- NanoClaw uses a Rust-based SQLite crypto store (`@matrix-org/matrix-sdk-crypto-nodejs`)
+- Element uses IndexedDB (browser) or its own format (desktop)
+- Keys are device-specific — they belong to the bot's device, not to an Element device
+
+Element's server-side key backup (with recovery key) also cannot be read by the bot, since `matrix-bot-sdk` does not implement the key backup download API.
+
+### Recommended backup approach
+
+Include `store/matrix-crypto/` in your regular host backup (e.g., restic, borgbackup, rsync, or filesystem snapshots). The directory is small (typically < 10 MB) and changes infrequently.
+
 ## Limitations
 
 - Bot appears as "unverified session" in Element (no cross-signing support in bot-sdk)
-- No server-side key backup — filesystem backup of `store/matrix-crypto/` is the only recovery path
+- No server-side key backup — see [E2EE Key Backup](#e2ee-key-backup-user-responsibility) above
 - No late-decryption retry for UTD events
