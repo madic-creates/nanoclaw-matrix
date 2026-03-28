@@ -14,15 +14,39 @@ import {
   getLatestOutboundEvent,
   storeChatMetadata,
 } from '../db.js';
+import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { Channel } from '../types.js';
 import { ChannelOpts, registerChannel } from './registry.js';
+
+// ---------------------------------------------------------------------------
+// Env helper — NanoClaw never loads .env into process.env (see src/env.ts)
+// ---------------------------------------------------------------------------
+
+const MATRIX_ENV_KEYS = [
+  'MATRIX_HOMESERVER_URL',
+  'MATRIX_ACCESS_TOKEN',
+  'MATRIX_E2EE',
+  'MATRIX_AUTO_JOIN',
+  'MATRIX_ALLOWED_SENDERS',
+  'MATRIX_MAX_FILE_SIZE',
+];
+
+function readMatrixEnv(): Record<string, string | undefined> {
+  const fromFile = readEnvFile(MATRIX_ENV_KEYS);
+  const result: Record<string, string | undefined> = {};
+  for (const key of MATRIX_ENV_KEYS) {
+    result[key] = process.env[key] ?? fromFile[key];
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const HEARTBEAT_TIMEOUT_MS = 60_000;
+const RECONNECT_DELAY_MS = 2_000;
 const TYPING_TIMEOUT_MS = 30_000;
 const MAX_QUEUE_PER_ROOM = 100;
 const DEFAULT_MAX_FILE_SIZE = 52_428_800; // 50 MB
@@ -58,6 +82,9 @@ export class MatrixChannel implements Channel {
   // UTD rate tracking per room
   private utdCounts = new Map<string, { count: number; windowStart: number }>();
 
+  // Reconnection guard
+  private reconnecting = false;
+
   private readonly opts: ChannelOpts;
   private readonly homeserverUrl: string;
   private readonly accessToken: string;
@@ -68,18 +95,19 @@ export class MatrixChannel implements Channel {
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
-    this.homeserverUrl = process.env.MATRIX_HOMESERVER_URL!;
-    this.accessToken = process.env.MATRIX_ACCESS_TOKEN!;
-    this.e2eeEnabled = process.env.MATRIX_E2EE === 'true';
-    this.autoJoin = process.env.MATRIX_AUTO_JOIN === 'true';
+    const env = readMatrixEnv();
+    this.homeserverUrl = env.MATRIX_HOMESERVER_URL!;
+    this.accessToken = env.MATRIX_ACCESS_TOKEN!;
+    this.e2eeEnabled = env.MATRIX_E2EE === 'true';
+    this.autoJoin = env.MATRIX_AUTO_JOIN === 'true';
     this.allowedSenders = new Set(
-      (process.env.MATRIX_ALLOWED_SENDERS || '')
+      (env.MATRIX_ALLOWED_SENDERS || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
     );
     this.maxFileSize =
-      Number(process.env.MATRIX_MAX_FILE_SIZE) || DEFAULT_MAX_FILE_SIZE;
+      Number(env.MATRIX_MAX_FILE_SIZE) || DEFAULT_MAX_FILE_SIZE;
   }
 
   // -----------------------------------------------------------------------
@@ -198,13 +226,18 @@ export class MatrixChannel implements Channel {
 
   async sendReaction(
     roomId: string,
-    targetEventId: string,
+    messageKey: {
+      id: string;
+      remoteJid: string;
+      fromMe?: boolean;
+      participant?: string;
+    },
     emoji: string,
   ): Promise<void> {
     await this.client.sendEvent(roomId, 'm.reaction', {
       'm.relates_to': {
         rel_type: 'm.annotation',
-        event_id: targetEventId,
+        event_id: messageKey.id,
         key: emoji,
       },
     });
@@ -216,7 +249,7 @@ export class MatrixChannel implements Channel {
       logger.warn({ roomId }, 'Matrix: no outbound event to react to');
       return;
     }
-    await this.sendReaction(roomId, eventId, emoji);
+    await this.sendReaction(roomId, { id: eventId, remoteJid: roomId }, emoji);
   }
 
   async sendFile(
@@ -597,10 +630,39 @@ export class MatrixChannel implements Channel {
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       if (Date.now() - this.lastSyncAt > HEARTBEAT_TIMEOUT_MS) {
-        logger.warn('Matrix: sync heartbeat timeout — marking disconnected');
+        logger.warn('Matrix: sync heartbeat timeout — attempting reconnect');
         this.connected = false;
+        this.attemptReconnect();
       }
     }, HEARTBEAT_TIMEOUT_MS);
+  }
+
+  private async attemptReconnect(): Promise<void> {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+
+    try {
+      try {
+        this.client.stop();
+      } catch {
+        // ignore stop errors
+      }
+
+      await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+
+      await this.client.start();
+      this.botUserId = await this.client.getUserId();
+      this.connected = true;
+      this.lastSyncAt = Date.now();
+      logger.info('Matrix: reconnected successfully');
+
+      await this.drainQueues();
+    } catch (err) {
+      logger.error({ err }, 'Matrix: reconnect failed');
+      this.connected = false;
+    } finally {
+      this.reconnecting = false;
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -639,7 +701,8 @@ export class MatrixChannel implements Channel {
 // ---------------------------------------------------------------------------
 
 registerChannel('matrix', (opts: ChannelOpts) => {
-  if (!process.env.MATRIX_ACCESS_TOKEN || !process.env.MATRIX_HOMESERVER_URL) {
+  const env = readMatrixEnv();
+  if (!env.MATRIX_ACCESS_TOKEN || !env.MATRIX_HOMESERVER_URL) {
     logger.warn('Matrix: credentials not found, skipping');
     return null;
   }

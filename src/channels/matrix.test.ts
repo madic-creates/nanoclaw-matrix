@@ -8,6 +8,16 @@ import { ChannelOpts } from './registry.js';
 // Mocks
 // ---------------------------------------------------------------------------
 
+vi.mock('../env.js', () => ({
+  readEnvFile: (keys: string[]) => {
+    const result: Record<string, string> = {};
+    for (const key of keys) {
+      if (process.env[key]) result[key] = process.env[key]!;
+    }
+    return result;
+  },
+}));
+
 vi.mock('matrix-bot-sdk', () => {
   const mockClient = {
     start: vi.fn().mockResolvedValue(undefined),
@@ -212,7 +222,11 @@ describe('MatrixChannel', () => {
       const ch = new MatrixChannel(makeOpts());
       await ch.connect();
 
-      await ch.sendReaction('!room:example.com', '$target', '👍');
+      await ch.sendReaction(
+        '!room:example.com',
+        { id: '$target', remoteJid: '!room:example.com' },
+        '👍',
+      );
 
       expect(mockClient.sendEvent).toHaveBeenCalledWith(
         '!room:example.com',
@@ -279,6 +293,65 @@ describe('MatrixChannel', () => {
         'matrix',
         false, // 2 members = DM
       );
+    });
+  });
+
+  // --- reconnect ---
+
+  describe('reconnect on heartbeat timeout', () => {
+    it('calls client.stop, then client.start, then drains queue', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+      mockClient.start.mockClear();
+      mockClient.stop.mockClear();
+      mockClient.sendMessage.mockClear();
+      mockClient.sendMessage.mockResolvedValue('$event2');
+
+      // Queue a message while "disconnected"
+      (ch as any).connected = false;
+      await ch.sendMessage('!room:example.com', 'queued-msg');
+
+      // Trigger reconnect
+      await (ch as any).attemptReconnect();
+
+      expect(mockClient.stop).toHaveBeenCalled();
+      expect(mockClient.start).toHaveBeenCalledTimes(1);
+      expect(ch.isConnected()).toBe(true);
+      // The queued message should have been drained (sendMessage called)
+      expect(mockClient.sendMessage).toHaveBeenCalledWith(
+        '!room:example.com',
+        expect.objectContaining({ body: 'queued-msg' }),
+      );
+    });
+
+    it('stays disconnected if reconnect fails', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+
+      (ch as any).connected = false;
+      mockClient.start.mockRejectedValueOnce(new Error('network error'));
+
+      await (ch as any).attemptReconnect();
+
+      expect(ch.isConnected()).toBe(false);
+    });
+
+    it('guards against concurrent reconnects', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+      mockClient.start.mockClear();
+
+      (ch as any).connected = false;
+      // Start two concurrent reconnects
+      const p1 = (ch as any).attemptReconnect();
+      const p2 = (ch as any).attemptReconnect();
+      await Promise.all([p1, p2]);
+
+      // start should only be called once (second reconnect is guarded)
+      expect(mockClient.start).toHaveBeenCalledTimes(1);
     });
   });
 
