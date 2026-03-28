@@ -82,6 +82,13 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS outbound_events (
+      event_id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'matrix'
+    );
+    CREATE INDEX IF NOT EXISTS idx_outbound_events_chat ON outbound_events(chat_jid, timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -667,6 +674,27 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Outbound event tracking (for reaction targeting) ---
+
+export function insertOutboundEvent(
+  eventId: string,
+  chatJid: string,
+  channel: string = 'matrix',
+): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO outbound_events (event_id, chat_jid, timestamp, channel) VALUES (?, ?, ?, ?)',
+  ).run(eventId, chatJid, new Date().toISOString(), channel);
+}
+
+export function getLatestOutboundEvent(chatJid: string): string | undefined {
+  const row = db
+    .prepare(
+      'SELECT event_id FROM outbound_events WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1',
+    )
+    .get(chatJid) as { event_id: string } | undefined;
+  return row?.event_id;
 }
 
 // --- JSON migration ---

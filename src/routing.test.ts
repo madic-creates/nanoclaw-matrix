@@ -22,12 +22,22 @@ describe('JID ownership patterns', () => {
     const jid = '12345678@s.whatsapp.net';
     expect(jid.endsWith('@s.whatsapp.net')).toBe(true);
   });
+
+  it('Matrix room ID: starts with ! and contains :', () => {
+    const roomId = '!abc123:server.example';
+    expect(roomId.startsWith('!') && roomId.includes(':')).toBe(true);
+  });
+
+  it('Matrix user ID is not a room ID', () => {
+    const userId = '@user:server.example';
+    expect(userId.startsWith('!')).toBe(false);
+  });
 });
 
 // --- getAvailableGroups ---
 
 describe('getAvailableGroups', () => {
-  it('returns only groups, excludes DMs', () => {
+  it('returns both groups and DMs for discovery', () => {
     storeChatMetadata(
       'group1@g.us',
       '2024-01-01T00:00:01.000Z',
@@ -43,18 +53,26 @@ describe('getAvailableGroups', () => {
       false,
     );
     storeChatMetadata(
-      'group2@g.us',
+      '!dm:matrix.org',
       '2024-01-01T00:00:03.000Z',
+      'Matrix DM',
+      'matrix',
+      false,
+    );
+    storeChatMetadata(
+      'group2@g.us',
+      '2024-01-01T00:00:04.000Z',
       'Group 2',
       'whatsapp',
       true,
     );
 
     const groups = getAvailableGroups();
-    expect(groups).toHaveLength(2);
+    expect(groups).toHaveLength(4);
     expect(groups.map((g) => g.jid)).toContain('group1@g.us');
     expect(groups.map((g) => g.jid)).toContain('group2@g.us');
-    expect(groups.map((g) => g.jid)).not.toContain('user@s.whatsapp.net');
+    expect(groups.map((g) => g.jid)).toContain('user@s.whatsapp.net');
+    expect(groups.map((g) => g.jid)).toContain('!dm:matrix.org');
   });
 
   it('excludes __group_sync__ sentinel', () => {
@@ -134,14 +152,14 @@ describe('getAvailableGroups', () => {
     expect(groups[2].jid).toBe('old@g.us');
   });
 
-  it('excludes non-group chats regardless of JID format', () => {
-    // Unknown JID format stored without is_group should not appear
+  it('includes all chats in discovery regardless of is_group', () => {
+    // Unknown JID format stored without is_group — still appears
     storeChatMetadata(
       'unknown-format-123',
       '2024-01-01T00:00:01.000Z',
       'Unknown',
     );
-    // Explicitly non-group with unusual JID
+    // Explicitly non-group with unusual JID — still appears (DM discovery)
     storeChatMetadata(
       'custom:abc',
       '2024-01-01T00:00:02.000Z',
@@ -149,7 +167,7 @@ describe('getAvailableGroups', () => {
       'custom',
       false,
     );
-    // A real group for contrast
+    // A group
     storeChatMetadata(
       'group@g.us',
       '2024-01-01T00:00:03.000Z',
@@ -159,8 +177,10 @@ describe('getAvailableGroups', () => {
     );
 
     const groups = getAvailableGroups();
-    expect(groups).toHaveLength(1);
-    expect(groups[0].jid).toBe('group@g.us');
+    expect(groups).toHaveLength(3);
+    expect(groups.map((g) => g.jid)).toContain('group@g.us');
+    expect(groups.map((g) => g.jid)).toContain('custom:abc');
+    expect(groups.map((g) => g.jid)).toContain('unknown-format-123');
   });
 
   it('returns empty array when no chats exist', () => {
