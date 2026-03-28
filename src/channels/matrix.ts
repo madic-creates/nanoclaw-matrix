@@ -42,6 +42,24 @@ function readMatrixEnv(): Record<string, string | undefined> {
 }
 
 // ---------------------------------------------------------------------------
+// WhatsApp markdown → HTML converter
+// ---------------------------------------------------------------------------
+
+export function whatsappMarkdownToHtml(text: string): string {
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*([^\s*](?:[^*]*[^\s*])?)\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\w)_([^\s_](?:[^_]*[^\s_])?)_(?!\w)/g, '<em>$1</em>');
+  html = html.replace(/~([^\s~](?:[^~]*[^\s~])?)~/g, '<del>$1</del>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -167,7 +185,7 @@ export class MatrixChannel implements Channel {
         msgtype: 'm.text',
         body: text,
         format: 'org.matrix.custom.html',
-        formatted_body: text,
+        formatted_body: whatsappMarkdownToHtml(text),
       });
       insertOutboundEvent(eventId, roomId, 'matrix');
     } catch (err) {
@@ -391,7 +409,10 @@ export class MatrixChannel implements Channel {
 
   private async onRoomInvite(roomId: string, event: any): Promise<void> {
     if (!this.autoJoin) {
-      logger.info({ roomId, sender: event.sender }, 'Matrix: invite received (auto-join disabled)');
+      logger.info(
+        { roomId, sender: event.sender },
+        'Matrix: invite received (auto-join disabled)',
+      );
       return;
     }
 
@@ -447,11 +468,7 @@ export class MatrixChannel implements Channel {
     }
   }
 
-  private onFailedDecryption(
-    roomId: string,
-    event: any,
-    error: Error,
-  ): void {
+  private onFailedDecryption(roomId: string, event: any, error: Error): void {
     logger.warn(
       { roomId, eventId: event.event_id, error: error.message },
       'UTD: failed to decrypt event',
@@ -529,10 +546,7 @@ export class MatrixChannel implements Channel {
         .basename(fileName)
         .replace(/[^a-zA-Z0-9._-]/g, '_')
         .substring(0, 200);
-      const savedPath = path.join(
-        attachDir,
-        `${Date.now()}_${safeName}`,
-      );
+      const savedPath = path.join(attachDir, `${Date.now()}_${safeName}`);
       fs.writeFileSync(savedPath, buffer);
 
       const attachmentNote = `[Attachment saved: ${savedPath}]`;
@@ -548,7 +562,10 @@ export class MatrixChannel implements Channel {
         is_from_me: false,
       });
     } catch (err) {
-      logger.error({ err, roomId, fileName }, 'Matrix: failed to download attachment');
+      logger.error(
+        { err, roomId, fileName },
+        'Matrix: failed to download attachment',
+      );
     }
   }
 
@@ -688,7 +705,10 @@ export class MatrixChannel implements Channel {
         try {
           await this.sendMessage(roomId, msg.text);
         } catch (err) {
-          logger.warn({ err, roomId }, 'Matrix: failed to drain queued message');
+          logger.warn(
+            { err, roomId },
+            'Matrix: failed to drain queued message',
+          );
         }
       }
     }

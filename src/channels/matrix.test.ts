@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { _initTestDatabase, _closeDatabase } from '../db.js';
-import { MatrixChannel } from './matrix.js';
+import { MatrixChannel, whatsappMarkdownToHtml } from './matrix.js';
 import { ChannelOpts } from './registry.js';
 
 // ---------------------------------------------------------------------------
@@ -28,23 +28,41 @@ vi.mock('matrix-bot-sdk', () => {
     sendEvent: vi.fn().mockResolvedValue('$reaction1'),
     setTyping: vi.fn().mockResolvedValue(undefined),
     getJoinedRooms: vi.fn().mockResolvedValue([]),
-    getJoinedRoomMembers: vi.fn().mockResolvedValue(['@bot:example.com', '@user:example.com']),
+    getJoinedRoomMembers: vi
+      .fn()
+      .mockResolvedValue(['@bot:example.com', '@user:example.com']),
     getRoomStateEvent: vi.fn().mockResolvedValue({ name: 'Test Room' }),
     joinRoom: vi.fn().mockResolvedValue('!joined:example.com'),
     sendReadReceipt: vi.fn().mockResolvedValue(undefined),
     uploadContent: vi.fn().mockResolvedValue('mxc://example.com/abc'),
-    downloadContent: vi.fn().mockResolvedValue({ data: Buffer.from('file'), contentType: 'application/octet-stream' }),
+    downloadContent: vi
+      .fn()
+      .mockResolvedValue({
+        data: Buffer.from('file'),
+        contentType: 'application/octet-stream',
+      }),
     crypto: {
       isRoomEncrypted: vi.fn().mockResolvedValue(false),
-      encryptMedia: vi.fn().mockResolvedValue({ buffer: Buffer.from('encrypted'), file: { key: 'k', iv: 'i', hashes: {} } }),
+      encryptMedia: vi
+        .fn()
+        .mockResolvedValue({
+          buffer: Buffer.from('encrypted'),
+          file: { key: 'k', iv: 'i', hashes: {} },
+        }),
       decryptMedia: vi.fn().mockResolvedValue(Buffer.from('decrypted')),
     },
   };
 
   return {
-    MatrixClient: vi.fn().mockImplementation(function () { return mockClient; }),
-    SimpleFsStorageProvider: vi.fn().mockImplementation(function () { return {}; }),
-    RustSdkCryptoStorageProvider: vi.fn().mockImplementation(function () { return {}; }),
+    MatrixClient: vi.fn().mockImplementation(function () {
+      return mockClient;
+    }),
+    SimpleFsStorageProvider: vi.fn().mockImplementation(function () {
+      return {};
+    }),
+    RustSdkCryptoStorageProvider: vi.fn().mockImplementation(function () {
+      return {};
+    }),
     RustSdkCryptoStoreType: { Sqlite: 0 },
     __mockClient: mockClient,
   };
@@ -184,6 +202,22 @@ describe('MatrixChannel', () => {
           body: 'Hello world',
           format: 'org.matrix.custom.html',
           formatted_body: 'Hello world',
+        }),
+      );
+    });
+
+    it('converts WhatsApp markdown to HTML in formatted_body', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+
+      await ch.sendMessage('!room:example.com', '*bold* and _italic_');
+
+      expect(mockClient.sendMessage).toHaveBeenCalledWith(
+        '!room:example.com',
+        expect.objectContaining({
+          body: '*bold* and _italic_',
+          formatted_body: '<strong>bold</strong> and <em>italic</em>',
         }),
       );
     });
@@ -392,5 +426,56 @@ describe('matrix self-registration', () => {
     const factory = getChannelFactory('matrix')!;
     const result = factory(makeOpts());
     expect(result).toBeInstanceOf(MatrixChannel);
+  });
+});
+
+// --- whatsappMarkdownToHtml ---
+
+describe('whatsappMarkdownToHtml', () => {
+  it('converts *bold* to <strong>', () => {
+    expect(whatsappMarkdownToHtml('*hello*')).toBe('<strong>hello</strong>');
+  });
+
+  it('converts _italic_ to <em>', () => {
+    expect(whatsappMarkdownToHtml('_hello_')).toBe('<em>hello</em>');
+  });
+
+  it('converts ~strike~ to <del>', () => {
+    expect(whatsappMarkdownToHtml('~hello~')).toBe('<del>hello</del>');
+  });
+
+  it('converts `code` to <code>', () => {
+    expect(whatsappMarkdownToHtml('`hello`')).toBe('<code>hello</code>');
+  });
+
+  it('converts ```code blocks``` to <pre><code>', () => {
+    expect(whatsappMarkdownToHtml('```foo\nbar```')).toBe(
+      '<pre><code>foo<br>bar</code></pre>',
+    );
+  });
+
+  it('converts newlines to <br>', () => {
+    expect(whatsappMarkdownToHtml('a\nb')).toBe('a<br>b');
+  });
+
+  it('escapes HTML entities', () => {
+    expect(whatsappMarkdownToHtml('<b>not html</b>')).toBe(
+      '&lt;b&gt;not html&lt;/b&gt;',
+    );
+  });
+
+  it('handles mixed formatting', () => {
+    const input = '*bold* and _italic_ and ~strike~';
+    const expected =
+      '<strong>bold</strong> and <em>italic</em> and <del>strike</del>';
+    expect(whatsappMarkdownToHtml(input)).toBe(expected);
+  });
+
+  it('does not convert underscores inside words', () => {
+    expect(whatsappMarkdownToHtml('foo_bar_baz')).toBe('foo_bar_baz');
+  });
+
+  it('leaves plain text unchanged', () => {
+    expect(whatsappMarkdownToHtml('hello world')).toBe('hello world');
   });
 });
