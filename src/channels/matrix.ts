@@ -64,14 +64,23 @@ export function markdownToHtml(text: string): string {
   });
 
   // Standard Markdown: **bold** and __bold__
-  html = html.replace(/\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(
+    /\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g,
+    '<strong>$1</strong>',
+  );
   html = html.replace(/__([^\s_](?:[^_]*[^\s_])?)__/g, '<strong>$1</strong>');
   // Standard Markdown: *italic* and _italic_
   html = html.replace(/\*([^\s*](?:[^*]*[^\s*])?)\*/g, '<em>$1</em>');
-  html = html.replace(/(?<!\w)_([^\s_](?:[^_]*[^\s_])?)_(?!\w)/g, '<em>$1</em>');
+  html = html.replace(
+    /(?<!\w)_([^\s_](?:[^_]*[^\s_])?)_(?!\w)/g,
+    '<em>$1</em>',
+  );
   // Standard + WhatsApp: ~~strike~~ and ~strike~
   html = html.replace(/~~([^\s~](?:[^~]*[^\s~])?)~~/g, '<del>$1</del>');
-  html = html.replace(/(?<!~)~([^\s~](?:[^~]*[^\s~])?)~(?!~)/g, '<del>$1</del>');
+  html = html.replace(
+    /(?<!~)~([^\s~](?:[^~]*[^\s~])?)~(?!~)/g,
+    '<del>$1</del>',
+  );
 
   // Newlines → <br>
   html = html.replace(/\n/g, '<br>');

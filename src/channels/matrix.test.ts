@@ -466,9 +466,7 @@ describe('markdownToHtml', () => {
   });
 
   it('does not transform markdown inside code blocks', () => {
-    expect(markdownToHtml('`**not bold**`')).toBe(
-      '<code>**not bold**</code>',
-    );
+    expect(markdownToHtml('`**not bold**`')).toBe('<code>**not bold**</code>');
   });
 
   it('does not transform markdown inside fenced code blocks', () => {
