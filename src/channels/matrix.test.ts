@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import { _initTestDatabase, _closeDatabase } from '../db.js';
-import { MatrixChannel, whatsappMarkdownToHtml } from './matrix.js';
+import { MatrixChannel, markdownToHtml } from './matrix.js';
 import { ChannelOpts } from './registry.js';
 
 // ---------------------------------------------------------------------------
@@ -35,20 +35,16 @@ vi.mock('matrix-bot-sdk', () => {
     joinRoom: vi.fn().mockResolvedValue('!joined:example.com'),
     sendReadReceipt: vi.fn().mockResolvedValue(undefined),
     uploadContent: vi.fn().mockResolvedValue('mxc://example.com/abc'),
-    downloadContent: vi
-      .fn()
-      .mockResolvedValue({
-        data: Buffer.from('file'),
-        contentType: 'application/octet-stream',
-      }),
+    downloadContent: vi.fn().mockResolvedValue({
+      data: Buffer.from('file'),
+      contentType: 'application/octet-stream',
+    }),
     crypto: {
       isRoomEncrypted: vi.fn().mockResolvedValue(false),
-      encryptMedia: vi
-        .fn()
-        .mockResolvedValue({
-          buffer: Buffer.from('encrypted'),
-          file: { key: 'k', iv: 'i', hashes: {} },
-        }),
+      encryptMedia: vi.fn().mockResolvedValue({
+        buffer: Buffer.from('encrypted'),
+        file: { key: 'k', iv: 'i', hashes: {} },
+      }),
       decryptMedia: vi.fn().mockResolvedValue(Buffer.from('decrypted')),
     },
   };
@@ -206,17 +202,17 @@ describe('MatrixChannel', () => {
       );
     });
 
-    it('converts WhatsApp markdown to HTML in formatted_body', async () => {
+    it('converts markdown to HTML in formatted_body', async () => {
       const mockClient = await getMockClient();
       const ch = new MatrixChannel(makeOpts());
       await ch.connect();
 
-      await ch.sendMessage('!room:example.com', '*bold* and _italic_');
+      await ch.sendMessage('!room:example.com', '**bold** and *italic*');
 
       expect(mockClient.sendMessage).toHaveBeenCalledWith(
         '!room:example.com',
         expect.objectContaining({
-          body: '*bold* and _italic_',
+          body: '**bold** and *italic*',
           formatted_body: '<strong>bold</strong> and <em>italic</em>',
         }),
       );
@@ -429,53 +425,81 @@ describe('matrix self-registration', () => {
   });
 });
 
-// --- whatsappMarkdownToHtml ---
+// --- markdownToHtml ---
 
-describe('whatsappMarkdownToHtml', () => {
-  it('converts *bold* to <strong>', () => {
-    expect(whatsappMarkdownToHtml('*hello*')).toBe('<strong>hello</strong>');
+describe('markdownToHtml', () => {
+  // Standard Markdown (Claude output)
+  it('converts **bold** to <strong>', () => {
+    expect(markdownToHtml('**hello**')).toBe('<strong>hello</strong>');
+  });
+
+  it('converts __bold__ to <strong>', () => {
+    expect(markdownToHtml('__hello__')).toBe('<strong>hello</strong>');
+  });
+
+  it('converts *italic* to <em>', () => {
+    expect(markdownToHtml('*hello*')).toBe('<em>hello</em>');
   });
 
   it('converts _italic_ to <em>', () => {
-    expect(whatsappMarkdownToHtml('_hello_')).toBe('<em>hello</em>');
+    expect(markdownToHtml('_hello_')).toBe('<em>hello</em>');
   });
 
-  it('converts ~strike~ to <del>', () => {
-    expect(whatsappMarkdownToHtml('~hello~')).toBe('<del>hello</del>');
+  it('converts ~~strike~~ to <del>', () => {
+    expect(markdownToHtml('~~hello~~')).toBe('<del>hello</del>');
   });
 
+  // WhatsApp-style (when channel-formatting is installed)
+  it('converts ~strike~ (WhatsApp) to <del>', () => {
+    expect(markdownToHtml('~hello~')).toBe('<del>hello</del>');
+  });
+
+  // Code
   it('converts `code` to <code>', () => {
-    expect(whatsappMarkdownToHtml('`hello`')).toBe('<code>hello</code>');
+    expect(markdownToHtml('`hello`')).toBe('<code>hello</code>');
   });
 
   it('converts ```code blocks``` to <pre><code>', () => {
-    expect(whatsappMarkdownToHtml('```foo\nbar```')).toBe(
-      '<pre><code>foo<br>bar</code></pre>',
+    expect(markdownToHtml('```foo\nbar```')).toBe(
+      '<pre><code>foo\nbar</code></pre>',
     );
   });
 
+  it('does not transform markdown inside code blocks', () => {
+    expect(markdownToHtml('`**not bold**`')).toBe(
+      '<code>**not bold**</code>',
+    );
+  });
+
+  it('does not transform markdown inside fenced code blocks', () => {
+    expect(markdownToHtml('```**not bold**```')).toBe(
+      '<pre><code>**not bold**</code></pre>',
+    );
+  });
+
+  // General
   it('converts newlines to <br>', () => {
-    expect(whatsappMarkdownToHtml('a\nb')).toBe('a<br>b');
+    expect(markdownToHtml('a\nb')).toBe('a<br>b');
   });
 
   it('escapes HTML entities', () => {
-    expect(whatsappMarkdownToHtml('<b>not html</b>')).toBe(
+    expect(markdownToHtml('<b>not html</b>')).toBe(
       '&lt;b&gt;not html&lt;/b&gt;',
     );
   });
 
-  it('handles mixed formatting', () => {
-    const input = '*bold* and _italic_ and ~strike~';
+  it('handles mixed standard markdown', () => {
+    const input = '**bold** and *italic* and ~~strike~~';
     const expected =
       '<strong>bold</strong> and <em>italic</em> and <del>strike</del>';
-    expect(whatsappMarkdownToHtml(input)).toBe(expected);
+    expect(markdownToHtml(input)).toBe(expected);
   });
 
   it('does not convert underscores inside words', () => {
-    expect(whatsappMarkdownToHtml('foo_bar_baz')).toBe('foo_bar_baz');
+    expect(markdownToHtml('foo_bar_baz')).toBe('foo_bar_baz');
   });
 
   it('leaves plain text unchanged', () => {
-    expect(whatsappMarkdownToHtml('hello world')).toBe('hello world');
+    expect(markdownToHtml('hello world')).toBe('hello world');
   });
 });

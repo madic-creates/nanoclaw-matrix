@@ -42,20 +42,43 @@ function readMatrixEnv(): Record<string, string | undefined> {
 }
 
 // ---------------------------------------------------------------------------
-// WhatsApp markdown → HTML converter
+// Markdown → HTML converter for Matrix formatted_body
 // ---------------------------------------------------------------------------
 
-export function whatsappMarkdownToHtml(text: string): string {
+export function markdownToHtml(text: string): string {
+  // Escape HTML entities first
   let html = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  html = html.replace(/\*([^\s*](?:[^*]*[^\s*])?)\*/g, '<strong>$1</strong>');
+
+  // Protect code blocks from further processing
+  const codeBlocks: string[] = [];
+  html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
+    codeBlocks.push(`<pre><code>${code}</code></pre>`);
+    return `\x00CB${codeBlocks.length - 1}\x00`;
+  });
+  html = html.replace(/`([^`]+)`/g, (_, code) => {
+    codeBlocks.push(`<code>${code}</code>`);
+    return `\x00CB${codeBlocks.length - 1}\x00`;
+  });
+
+  // Standard Markdown: **bold** and __bold__
+  html = html.replace(/\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__([^\s_](?:[^_]*[^\s_])?)__/g, '<strong>$1</strong>');
+  // Standard Markdown: *italic* and _italic_
+  html = html.replace(/\*([^\s*](?:[^*]*[^\s*])?)\*/g, '<em>$1</em>');
   html = html.replace(/(?<!\w)_([^\s_](?:[^_]*[^\s_])?)_(?!\w)/g, '<em>$1</em>');
-  html = html.replace(/~([^\s~](?:[^~]*[^\s~])?)~/g, '<del>$1</del>');
+  // Standard + WhatsApp: ~~strike~~ and ~strike~
+  html = html.replace(/~~([^\s~](?:[^~]*[^\s~])?)~~/g, '<del>$1</del>');
+  html = html.replace(/(?<!~)~([^\s~](?:[^~]*[^\s~])?)~(?!~)/g, '<del>$1</del>');
+
+  // Newlines → <br>
   html = html.replace(/\n/g, '<br>');
+
+  // Restore code blocks
+  html = html.replace(/\x00CB(\d+)\x00/g, (_, idx) => codeBlocks[Number(idx)]);
+
   return html;
 }
 
@@ -185,7 +208,7 @@ export class MatrixChannel implements Channel {
         msgtype: 'm.text',
         body: text,
         format: 'org.matrix.custom.html',
-        formatted_body: whatsappMarkdownToHtml(text),
+        formatted_body: markdownToHtml(text),
       });
       insertOutboundEvent(eventId, roomId, 'matrix');
     } catch (err) {
