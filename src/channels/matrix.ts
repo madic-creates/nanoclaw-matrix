@@ -95,7 +95,7 @@ export function markdownToHtml(text: string): string {
 // Constants
 // ---------------------------------------------------------------------------
 
-const HEARTBEAT_TIMEOUT_MS = 60_000;
+const HEARTBEAT_INTERVAL_MS = 300_000; // Check connection every 5 minutes
 const RECONNECT_DELAY_MS = 2_000;
 const TYPING_TIMEOUT_MS = 30_000;
 const MAX_QUEUE_PER_ROOM = 100;
@@ -120,7 +120,6 @@ export class MatrixChannel implements Channel {
   private client!: MatrixClient;
   private connected = false;
   private botUserId = '';
-  private lastSyncAt = 0;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   // Outbound queue for when disconnected
@@ -193,7 +192,6 @@ export class MatrixChannel implements Channel {
       await this.client.start();
       this.botUserId = await this.client.getUserId();
       this.connected = true;
-      this.lastSyncAt = Date.now();
       this.startHeartbeat();
       logger.info({ userId: this.botUserId }, 'Matrix: connected');
 
@@ -379,9 +377,6 @@ export class MatrixChannel implements Channel {
   }
 
   private async onRoomMessage(roomId: string, event: any): Promise<void> {
-    // Track sync activity for heartbeat
-    this.lastSyncAt = Date.now();
-
     // Ignore own messages
     if (event.sender === this.botUserId) return;
 
@@ -468,8 +463,6 @@ export class MatrixChannel implements Channel {
   }
 
   private async onRoomEvent(roomId: string, event: any): Promise<void> {
-    this.lastSyncAt = Date.now();
-
     // Room tombstone (upgrade)
     if (event.type === 'm.room.tombstone') {
       const newRoomId = event.content?.replacement_room;
@@ -678,12 +671,25 @@ export class MatrixChannel implements Channel {
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
-      if (Date.now() - this.lastSyncAt > HEARTBEAT_TIMEOUT_MS) {
-        logger.warn('Matrix: sync heartbeat timeout — attempting reconnect');
-        this.connected = false;
-        this.attemptReconnect();
-      }
-    }, HEARTBEAT_TIMEOUT_MS);
+      void this.probeConnection();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * Active connection probe: make a lightweight API call to verify the
+   * connection is alive. This replaces the old passive approach that tracked
+   * room events — which falsely triggered reconnects in quiet rooms where
+   * no events arrived within the timeout window.
+   */
+  private async probeConnection(): Promise<void> {
+    try {
+      await this.client.getUserId();
+      // Connection is alive — nothing to do
+    } catch (err) {
+      logger.warn({ err }, 'Matrix: connection probe failed — reconnecting');
+      this.connected = false;
+      await this.attemptReconnect();
+    }
   }
 
   private async attemptReconnect(): Promise<void> {
@@ -702,7 +708,6 @@ export class MatrixChannel implements Channel {
       await this.client.start();
       this.botUserId = await this.client.getUserId();
       this.connected = true;
-      this.lastSyncAt = Date.now();
       logger.info('Matrix: reconnected successfully');
 
       await this.drainQueues();

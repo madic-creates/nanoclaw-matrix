@@ -383,6 +383,32 @@ describe('MatrixChannel', () => {
       // start should only be called once (second reconnect is guarded)
       expect(mockClient.start).toHaveBeenCalledTimes(1);
     });
+
+    it('probeConnection does not reconnect when API call succeeds', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+      mockClient.start.mockClear();
+
+      await (ch as any).probeConnection();
+
+      expect(ch.isConnected()).toBe(true);
+      expect(mockClient.start).not.toHaveBeenCalled();
+    });
+
+    it('probeConnection triggers reconnect when API call fails', async () => {
+      const mockClient = await getMockClient();
+      const ch = new MatrixChannel(makeOpts());
+      await ch.connect();
+      mockClient.start.mockClear();
+
+      mockClient.getUserId.mockRejectedValueOnce(new Error('connection lost'));
+      await (ch as any).probeConnection();
+
+      // Should have reconnected
+      expect(mockClient.start).toHaveBeenCalledTimes(1);
+      expect(ch.isConnected()).toBe(true);
+    });
   });
 
   // --- name ---
